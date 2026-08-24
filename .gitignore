@@ -1,0 +1,6 @@
+dbt-env/
+logs/
+target/
+dbt_packages/
+scripts/set-snowflake-env.ps1
+scripts/set-snowflake-env.bat
