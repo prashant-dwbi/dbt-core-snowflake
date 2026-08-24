@@ -1,0 +1,46 @@
+name: dbt CI
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_CI_USER }}
+  SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_CI_PRIVATE_KEY_PASSPHRASE }}
+  SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_CI_ROLE }}
+  SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_CI_DATABASE }}
+  SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_CI_WAREHOUSE }}
+  SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_CI_SCHEMA }}
+  DBT_PROFILES_DIR: ${{ github.workspace }}/ci
+
+jobs:
+  dbt-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dbt_sales_mart
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dbt-snowflake
+        run: pip install dbt-snowflake
+
+      - name: Write Snowflake private key to disk
+        run: |
+          mkdir -p "$RUNNER_TEMP/snowflake_keys"
+          printf '%s\n' "${{ secrets.SNOWFLAKE_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/snowflake_keys/rsa_key.p8"
+          chmod 600 "$RUNNER_TEMP/snowflake_keys/rsa_key.p8"
+          echo "SNOWFLAKE_PRIVATE_KEY_PATH=$RUNNER_TEMP/snowflake_keys/rsa_key.p8" >> "$GITHUB_ENV"
+
+      - name: dbt debug
+        run: dbt debug
+
+      - name: dbt build
+        run: dbt build
