@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: int_lineitem_revenue
+    description: >
+      Line-item grain. Adds net_revenue (after discount) and gross_revenue
+      (after discount and tax) to the raw lineitem staging model.
+    columns:
+      - name: order_key
+        tests:
+          - not_null
+      - name: line_number
+        tests:
+          - not_null
+
+  - name: int_order_line_items_joined
+    description: >
+      Line-item grain. Joins int_lineitem_revenue to its parent order to pull
+      in customer_key, order_date, order_status and order_priority.
+    columns:
+      - name: order_key
+        tests:
+          - not_null
+      - name: line_number
+        tests:
+          - not_null
+
+  - name: int_partsupp_enriched
+    description: >
+      Part/supplier pairing grain. Joins partsupp to part and to supplier
+      (with supplier's nation and region) for procurement-style analysis.
+    columns:
+      - name: part_key
+        tests:
+          - not_null
+      - name: supplier_key
+        tests:
+          - not_null

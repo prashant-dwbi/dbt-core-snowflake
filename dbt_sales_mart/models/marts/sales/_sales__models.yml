@@ -1,0 +1,67 @@
+version: 2
+
+models:
+  - name: dim_nations
+    description: One row per nation, joined to its parent region.
+    columns:
+      - name: nation_key
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_customers
+    description: One row per customer, enriched with nation and region.
+    columns:
+      - name: customer_key
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_suppliers
+    description: One row per supplier, enriched with nation and region.
+    columns:
+      - name: supplier_key
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_parts
+    description: One row per part.
+    columns:
+      - name: part_key
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_order_line_items
+    description: >
+      Grain is one row per order line item, sourced from
+      int_order_line_items_joined (net/gross revenue after discount and tax,
+      joined to parent order attributes).
+    columns:
+      - name: order_key
+        tests:
+          - not_null
+      - name: line_number
+        tests:
+          - not_null
+
+  - name: fct_orders
+    description: >
+      Grain is one row per order, with line-item measures aggregated up
+      to the order level.
+    columns:
+      - name: order_key
+        tests:
+          - unique
+          - not_null
+
+  - name: mart_sales_by_nation_quarter
+    description: >
+      Sales data mart: revenue and order counts rolled up by customer
+      nation/region and order quarter.
+
+  - name: mart_part_supply_by_nation
+    description: >
+      Procurement data mart: supplier count, available quantity and
+      min/avg/max supply cost per part, rolled up by supplier nation/region.

@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: stg_tpch_customers
+    description: One row per customer, from the TPCH sample customer table.
+    columns:
+      - name: customer_key
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_tpch_orders
+    description: One row per order, from the TPCH sample orders table.
+    columns:
+      - name: order_key
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_tpch_lineitems
+    description: One row per order line item, from the TPCH sample lineitem table.
+    columns:
+      - name: order_key
+        tests:
+          - not_null
+
+  - name: stg_tpch_nations
+    description: One row per nation, from the TPCH sample nation table.
+    columns:
+      - name: nation_key
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_tpch_regions
+    description: One row per region, from the TPCH sample region table.
+    columns:
+      - name: region_key
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_tpch_suppliers
+    description: One row per supplier, from the TPCH sample supplier table.
+    columns:
+      - name: supplier_key
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_tpch_parts
+    description: One row per part, from the TPCH sample part table.
+    columns:
+      - name: part_key
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_tpch_partsupps
+    description: One row per part/supplier pairing, from the TPCH sample partsupp table.
