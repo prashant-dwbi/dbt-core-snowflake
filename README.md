@@ -314,7 +314,7 @@ astro dev start
 
 This builds the image from the Dockerfile and starts six containers: Postgres (metadata DB), scheduler, dag-processor, api-server (Airflow UI), triggerer, and a one-shot db-migration job that runs `airflow db migrate` and then exits (an `Exited` state for `db-migration` in the next command is expected — it's not a crash).
 
-Once healthy, it prints the local UI URL (e.g. `http://airflow.localhost:<port>`); the default login is `admin` / `admin`.
+Once healthy, it prints the local UI URL (e.g. `http://airflow.localhost:<port>`). You can also always reach it directly at **http://localhost:8080/**, regardless of what port the proxy prints. The default login is `admin` / `admin`.
 
 ### 3. Verify the environment came up clean
 
