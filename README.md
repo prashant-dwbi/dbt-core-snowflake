@@ -129,3 +129,111 @@ dbt test
 dbt docs generate
 dbt docs serve
 ```
+
+## 8. CI pipeline
+
+A GitHub Actions workflow at [`.github/workflows/dbt-ci.yml`](.github/workflows/dbt-ci.yml) runs `dbt debug` and `dbt build` (run + test) against Snowflake on every pull request into `main`. It builds into an isolated `CI` schema so it never touches the `DBT` dev schema or anything else.
+
+**Auth:** the pipeline uses key-pair auth with a dedicated, least-privilege Snowflake service user (`DBT_CI_SVC` / role `DBT_CI_ROLE`) instead of a personal account or password — CI runners are headless, so interactive `externalbrowser` SSO won't work there.
+
+**Profile:** [`ci/profiles.yml`](ci/profiles.yml) is committed to the repo and contains no secrets — every value is pulled from an environment variable via `env_var()`, the same pattern used for local dev. The workflow sets `DBT_PROFILES_DIR` to that folder.
+
+### One-time setup
+
+1. Generate an RSA key pair (run locally, not committed):
+   ```bash
+   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+   openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+   ```
+2. Create the service user/role in Snowflake, using the public key body (strip the `-----BEGIN/END-----` lines):
+   ```sql
+
+   CREATE ROLE IF NOT EXISTS DBT_CI_ROLE;
+
+   CREATE USER IF NOT EXISTS DBT_CI_SVC
+     RSA_PUBLIC_KEY = '<base64 body of rsa_key.pub>'
+     DEFAULT_ROLE = DBT_CI_ROLE
+     DEFAULT_WAREHOUSE = COMPUTE_WH
+     COMMENT = 'Service account for GitHub Actions dbt CI';
+
+   GRANT ROLE DBT_CI_ROLE TO USER DBT_CI_SVC;
+
+   GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE DBT_CI_ROLE;
+   GRANT USAGE ON DATABASE SALES_MART_DEV TO ROLE DBT_CI_ROLE;
+   GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE_SAMPLE_DATA TO ROLE DBT_CI_ROLE;
+
+   CREATE SCHEMA IF NOT EXISTS SALES_MART_DEV.CI;
+   GRANT ALL ON SCHEMA SALES_MART_DEV.CI TO ROLE DBT_CI_ROLE;
+   GRANT CREATE TABLE, CREATE VIEW ON SCHEMA SALES_MART_DEV.CI TO ROLE DBT_CI_ROLE;
+   ```
+3. Add these as GitHub repo secrets (**Settings → Secrets and variables → Actions**):
+
+   | Secret | Value |
+   |---|---|
+   | `SNOWFLAKE_ACCOUNT` | your account locator |
+   | `SNOWFLAKE_CI_USER` | `DBT_CI_SVC` |
+   | `SNOWFLAKE_CI_PRIVATE_KEY` | full contents of `rsa_key.p8`, including the `BEGIN/END PRIVATE KEY` lines |
+   | `SNOWFLAKE_CI_PRIVATE_KEY_PASSPHRASE` | leave empty (key generated with `-nocrypt`) |
+   | `SNOWFLAKE_CI_ROLE` | `DBT_CI_ROLE` |
+   | `SNOWFLAKE_CI_DATABASE` | `SALES_MART_DEV` |
+   | `SNOWFLAKE_CI_WAREHOUSE` | `COMPUTE_WH` |
+   | `SNOWFLAKE_CI_SCHEMA` | `CI` |
+
+Once the secrets are in place, opening a PR against `main` triggers the workflow automatically.
+
+## 9. CD pipeline
+
+A second GitHub Actions workflow at [`.github/workflows/dbt-cd.yml`](.github/workflows/dbt-cd.yml) deploys to production whenever a change is pushed/merged to `main`. It builds into a separate Snowflake **database** (`SALES_MART_PROD`), distinct from both your personal `DBT` dev schema and the CI job's `CI` schema — a full database split rather than just another schema, so prod and non-prod credentials can never reach each other's data even by mistake.
+
+**Approval gate:** the deploy job runs under the `production` GitHub Environment, which is configured with a required reviewer. After a merge to `main`, the workflow pauses until someone manually approves the run before it touches Snowflake — see setup step 3 below.
+
+**Auth:** uses its own dedicated, least-privilege service account (`DBT_PROD_SVC` / role `DBT_PROD_ROLE`), separate from the CI service account, scoped only to `SALES_MART_PROD`.
+
+**Profile:** [`cd/profiles.yml`](cd/profiles.yml) is committed and secrets-free, same `env_var()` pattern as `ci/profiles.yml`.
+
+**Docs:** after a successful build, the workflow runs `dbt docs generate` and publishes the docs site to GitHub Pages via a second job (`publish-docs`), gated on the deploy job succeeding.
+
+### One-time setup
+
+1. Generate a second, separate RSA key pair for the prod service account (keep it distinct from the CI key):
+   ```bash
+   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key_prod.p8 -nocrypt
+   openssl rsa -in rsa_key_prod.p8 -pubout -out rsa_key_prod.pub
+   ```
+2. Create the prod database, schema, service user and role in Snowflake:
+   ```sql
+   CREATE DATABASE IF NOT EXISTS SALES_MART_PROD;
+   CREATE SCHEMA IF NOT EXISTS SALES_MART_PROD.MARTS;
+
+   CREATE ROLE IF NOT EXISTS DBT_PROD_ROLE;
+
+   CREATE USER IF NOT EXISTS DBT_PROD_SVC
+     RSA_PUBLIC_KEY = '<base64 body of rsa_key_prod.pub>'
+     DEFAULT_ROLE = DBT_PROD_ROLE
+     DEFAULT_WAREHOUSE = COMPUTE_WH
+     COMMENT = 'Service account for GitHub Actions dbt CD (production deploys)';
+
+   GRANT ROLE DBT_PROD_ROLE TO USER DBT_PROD_SVC;
+
+   GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE DBT_PROD_ROLE;
+   GRANT USAGE ON DATABASE SALES_MART_PROD TO ROLE DBT_PROD_ROLE;
+   GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE_SAMPLE_DATA TO ROLE DBT_PROD_ROLE;
+
+   GRANT ALL ON SCHEMA SALES_MART_PROD.MARTS TO ROLE DBT_PROD_ROLE;
+   GRANT CREATE TABLE, CREATE VIEW ON SCHEMA SALES_MART_PROD.MARTS TO ROLE DBT_PROD_ROLE;
+   ```
+3. Create the `production` GitHub Environment with a required reviewer (**Settings → Environments → New environment**, name it `production`, then under "Deployment protection rules" add yourself or another reviewer as a required reviewer). Add the secrets below scoped to this environment (rather than repo-wide) so they're only reachable once a run is approved:
+
+   | Secret | Value |
+   |---|---|
+   | `SNOWFLAKE_ACCOUNT` | your account locator (can reuse the repo-level secret) |
+   | `SNOWFLAKE_CD_USER` | `DBT_PROD_SVC` |
+   | `SNOWFLAKE_CD_PRIVATE_KEY` | full contents of `rsa_key_prod.p8`, including the `BEGIN/END PRIVATE KEY` lines |
+   | `SNOWFLAKE_CD_PRIVATE_KEY_PASSPHRASE` | leave empty (key generated with `-nocrypt`) |
+   | `SNOWFLAKE_CD_ROLE` | `DBT_PROD_ROLE` |
+   | `SNOWFLAKE_CD_DATABASE` | `SALES_MART_PROD` |
+   | `SNOWFLAKE_CD_WAREHOUSE` | `COMPUTE_WH` |
+   | `SNOWFLAKE_CD_SCHEMA` | `MARTS` |
+4. Enable GitHub Pages (**Settings → Pages → Source → GitHub Actions**) so the `publish-docs` job has somewhere to deploy to.
+
+Once merged to `main`, the `deploy` job will wait for approval in the **Actions** tab; approving it runs `dbt build` against `SALES_MART_PROD` and then publishes fresh docs.
