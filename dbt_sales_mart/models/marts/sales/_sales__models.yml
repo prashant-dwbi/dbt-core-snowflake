@@ -2,66 +2,184 @@ version: 2
 
 models:
   - name: dim_nations
-    description: One row per nation, joined to its parent region.
+    description: >
+      Grain: one row per nation (25 rows for TPCH_SF1).
+
+
+      Purpose: small reference dimension joining nation to its parent
+      region. Exists mainly so dim_customers and dim_suppliers don't each
+      duplicate the nation-region join — both left join onto this model.
+      int_partsupp_enriched intentionally does NOT use this model (it
+      re-resolves nation/region from staging directly) to keep the
+      intermediate layer from depending on the mart layer.
+
+
+      Depends on: stg_tpch_nations, stg_tpch_regions.
+      Consumed by: dim_customers, dim_suppliers.
     columns:
       - name: nation_key
+        description: Primary key.
         tests:
           - unique
           - not_null
+      - name: region_key
+        description: FK to region — every nation belongs to exactly one region.
 
   - name: dim_customers
-    description: One row per customer, enriched with nation and region.
+    description: >
+      Grain: one row per customer (150k rows for TPCH_SF1).
+
+
+      Purpose: customer dimension for the sales mart, enriched with the
+      customer's nation and region via dim_nations. This is the model
+      mart_sales_by_nation_quarter joins fct_orders against to get
+      nation_name/region_name — if you add a new customer attribute
+      needed for reporting, add it here rather than duplicating the
+      customer join elsewhere.
+
+
+      Depends on: stg_tpch_customers, dim_nations.
+      Consumed by: mart_sales_by_nation_quarter.
     columns:
       - name: customer_key
+        description: Primary key.
         tests:
           - unique
           - not_null
+      - name: market_segment
+        description: TPCH customer segment (e.g. BUILDING, AUTOMOBILE) — useful for future segment-level cuts.
 
   - name: dim_suppliers
-    description: One row per supplier, enriched with nation and region.
+    description: >
+      Grain: one row per supplier (10k rows for TPCH_SF1).
+
+
+      Purpose: supplier dimension enriched with nation and region via
+      dim_nations. Not currently joined into any mart (the procurement
+      mart uses int_partsupp_enriched's own nation/region resolution
+      instead) — kept as a general-purpose supplier dimension for future
+      supplier-level reporting.
+
+
+      Depends on: stg_tpch_suppliers, dim_nations.
     columns:
       - name: supplier_key
+        description: Primary key.
         tests:
           - unique
           - not_null
 
   - name: dim_parts
-    description: One row per part.
+    description: >
+      Grain: one row per part (200k rows for TPCH_SF1).
+
+
+      Purpose: part catalog dimension, no joins. Deliberately not used by
+      int_partsupp_enriched (which reads stg_tpch_parts directly instead)
+      to avoid the intermediate layer depending on the mart layer.
     columns:
       - name: part_key
+        description: Primary key.
         tests:
           - unique
           - not_null
 
   - name: fct_order_line_items
     description: >
-      Grain is one row per order line item, sourced from
-      int_order_line_items_joined (net/gross revenue after discount and tax,
-      joined to parent order attributes).
+      Grain: one row per order line item (order_key + line_number),
+      matching stg_tpch_lineitems 1:1 — 6M rows for TPCH_SF1.
+
+
+      Purpose: line-item-level fact table. This model is intentionally a
+      thin `select * from int_order_line_items_joined` — all the actual
+      join and revenue-calc logic lives in the intermediate layer
+      (int_lineitem_revenue, int_order_line_items_joined). To change what
+      columns or measures this fact exposes, edit the intermediate models,
+      not this one. fct_orders aggregates this model up to order grain.
     columns:
       - name: order_key
+        description: FK to the parent order. Not unique alone — unique together with line_number.
         tests:
           - not_null
       - name: line_number
+        description: Line sequence number within an order (1, 2, 3, ...).
         tests:
           - not_null
+      - name: net_revenue
+        description: extended_price after discount, before tax.
+      - name: gross_revenue
+        description: net_revenue with tax applied — the "customer pays" amount.
 
   - name: fct_orders
     description: >
-      Grain is one row per order, with line-item measures aggregated up
-      to the order level.
+      Grain: one row per order (order_key) — 1.5M rows for TPCH_SF1.
+
+
+      Purpose: order-level fact. line_item_count/total_quantity/net_revenue/
+      gross_revenue are aggregated up from fct_order_line_items (grouped by
+      order_key) and then joined back onto the order header
+      (stg_tpch_orders) for customer_key/order_date/status/priority/clerk.
+      This is the model mart_sales_by_nation_quarter aggregates further, by
+      nation and quarter — if a new order-level measure is needed, add the
+      aggregation in the order_aggregates CTE here rather than recomputing
+      it downstream.
+
+
+      Depends on: stg_tpch_orders, fct_order_line_items.
+      Consumed by: mart_sales_by_nation_quarter.
     columns:
       - name: order_key
+        description: Primary key.
         tests:
           - unique
           - not_null
+      - name: net_revenue
+        description: Sum of fct_order_line_items.net_revenue for this order.
+      - name: gross_revenue
+        description: Sum of fct_order_line_items.gross_revenue for this order.
 
   - name: mart_sales_by_nation_quarter
     description: >
-      Sales data mart: revenue and order counts rolled up by customer
-      nation/region and order quarter.
+      Grain: one row per (customer nation, customer region, order quarter).
+
+
+      Purpose: the sales data mart deliverable. Joins fct_orders to
+      dim_customers to attribute each order to the customer's nation/
+      region, truncates order_date to quarter, and aggregates order_count,
+      customer_count (distinct), net_revenue, gross_revenue, and
+      avg_order_value = net_revenue / order_count. This is a terminal
+      model — nothing else in the project selects from it. Safe to add new
+      aggregate measures to the final select, but changing the group-by
+      grain (columns 1/2/3) changes what "one row" means for every
+      consumer of this table outside dbt (BI tools, ad hoc queries).
+
+
+      Depends on: fct_orders, dim_customers.
+    columns:
+      - name: order_quarter
+        description: order_date truncated to the start of its quarter (date_trunc('quarter', order_date)).
+      - name: avg_order_value
+        description: net_revenue / order_count for the group. Guarded with nullif so a zero-order group doesn't divide by zero.
 
   - name: mart_part_supply_by_nation
     description: >
-      Procurement data mart: supplier count, available quantity and
-      min/avg/max supply cost per part, rolled up by supplier nation/region.
+      Grain: one row per (part, supplier nation, supplier region) —
+      i.e. all supplier offers for a part are rolled up by the nation/
+      region those suppliers are located in.
+
+
+      Purpose: procurement data mart. Built entirely from
+      int_partsupp_enriched — aggregates supplier_count (distinct),
+      total_available_quantity, and min/avg/max supply_cost per group.
+      Useful for answering "which region can supply this part, and at
+      roughly what cost." This is a terminal model — nothing else in the
+      project selects from it. To add a new part/supplier attribute to
+      this mart, add it to int_partsupp_enriched first (so other
+      procurement models could reuse it), then include it in this
+      model's group-by.
+
+
+      Depends on: int_partsupp_enriched.
+    columns:
+      - name: min_supply_cost
+        description: Cheapest supply_cost among suppliers in this nation for this part — the headline "best price available locally" figure.
