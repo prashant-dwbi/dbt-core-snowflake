@@ -173,7 +173,7 @@ A GitHub Actions workflow at [`.github/workflows/dbt-ci.yml`](.github/workflows/
    | `SNOWFLAKE_ACCOUNT` | your account locator |
    | `SNOWFLAKE_CI_USER` | `DBT_CI_SVC` |
    | `SNOWFLAKE_CI_PRIVATE_KEY` | full contents of `rsa_key.p8`, including the `BEGIN/END PRIVATE KEY` lines |
-   | `SNOWFLAKE_CI_PRIVATE_KEY_PASSPHRASE` | leave empty (key generated with `-nocrypt`) |
+   | `SNOWFLAKE_CI_PRIVATE_KEY_PASSPHRASE` | omit this secret entirely — GitHub rejects blank secret values, and the workflow/profile already default to an empty passphrase when it's unset (key generated with `-nocrypt`) |
    | `SNOWFLAKE_CI_ROLE` | `DBT_CI_ROLE` |
    | `SNOWFLAKE_CI_DATABASE` | `SALES_MART_DEV` |
    | `SNOWFLAKE_CI_WAREHOUSE` | `COMPUTE_WH` |
@@ -229,7 +229,7 @@ A second GitHub Actions workflow at [`.github/workflows/dbt-cd.yml`](.github/wor
    | `SNOWFLAKE_ACCOUNT` | your account locator (can reuse the repo-level secret) |
    | `SNOWFLAKE_CD_USER` | `DBT_PROD_SVC` |
    | `SNOWFLAKE_CD_PRIVATE_KEY` | full contents of `rsa_key_prod.p8`, including the `BEGIN/END PRIVATE KEY` lines |
-   | `SNOWFLAKE_CD_PRIVATE_KEY_PASSPHRASE` | leave empty (key generated with `-nocrypt`) |
+   | `SNOWFLAKE_CD_PRIVATE_KEY_PASSPHRASE` | omit this secret entirely — GitHub rejects blank secret values, and the workflow/profile already default to an empty passphrase when it's unset (key generated with `-nocrypt`) |
    | `SNOWFLAKE_CD_ROLE` | `DBT_PROD_ROLE` |
    | `SNOWFLAKE_CD_DATABASE` | `SALES_MART_PROD` |
    | `SNOWFLAKE_CD_WAREHOUSE` | `COMPUTE_WH` |
@@ -237,3 +237,33 @@ A second GitHub Actions workflow at [`.github/workflows/dbt-cd.yml`](.github/wor
 4. Enable GitHub Pages (**Settings → Pages → Source → GitHub Actions**) so the `publish-docs` job has somewhere to deploy to.
 
 Once merged to `main`, the `deploy` job will wait for approval in the **Actions** tab; approving it runs `dbt build` against `SALES_MART_PROD` and then publishes fresh docs.
+
+## 10. Rotating service account keys
+
+Snowflake supports two active public keys per user (`RSA_PUBLIC_KEY` and `RSA_PUBLIC_KEY_2`), which lets you swap in a new key pair without a window where CI/CD is broken. Rotate the CI key (`DBT_CI_SVC`) and the CD key (`DBT_PROD_SVC`) independently — do one at a time so a mistake in one doesn't take down both pipelines.
+
+Rotate a key immediately if it's ever exposed — pasted into a chat, shown in an IDE selection/screenshot, committed to git (even briefly), or logged anywhere outside the GitHub secret store.
+
+1. Generate a new key pair locally (use a name that won't collide with the old one, e.g. `rsa_key_ci_new.p8` / `rsa_key_prod_new.p8`):
+   ```bash
+   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key_ci_new.p8 -nocrypt
+   openssl rsa -in rsa_key_ci_new.p8 -pubout -out rsa_key_ci_new.pub
+   ```
+2. Attach the new public key to the service user's secondary key slot, leaving the old key active:
+   ```sql
+   ALTER USER DBT_CI_SVC SET RSA_PUBLIC_KEY_2 = '<base64 body of rsa_key_ci_new.pub>';
+   ```
+3. Update the corresponding GitHub secret with the new private key:
+   - CI: repo secret `SNOWFLAKE_CI_PRIVATE_KEY` (**Settings → Secrets and variables → Actions**) → paste the full contents of `rsa_key_ci_new.p8`.
+   - CD: `SNOWFLAKE_CD_PRIVATE_KEY` on the `production` environment (**Settings → Environments → production**) → paste the full contents of `rsa_key_prod_new.p8`.
+4. Confirm the pipeline still works with the new key:
+   - CI: open any PR (or push an empty commit to one) and check the `dbt-ci` workflow run passes.
+   - CD: merge to `main`, approve the `production` deployment, and check the `dbt-cd` workflow run passes.
+5. Once confirmed, remove the old key so it can no longer authenticate:
+   ```sql
+   ALTER USER DBT_CI_SVC UNSET RSA_PUBLIC_KEY;
+   ALTER USER DBT_CI_SVC SET RSA_PUBLIC_KEY = '<base64 body of rsa_key_ci_new.pub>';
+   ALTER USER DBT_CI_SVC UNSET RSA_PUBLIC_KEY_2;
+   ```
+   (Snowflake doesn't let you leave the primary slot empty, so move the new key into `RSA_PUBLIC_KEY` and clear `RSA_PUBLIC_KEY_2` — this also leaves the account ready for the next rotation.) Repeat the equivalent `ALTER USER DBT_PROD_SVC ...` statements for the CD key.
+6. Delete the old and new private key files from disk once they're safely in GitHub secrets and Snowflake — they should never be needed locally again. Both `rsa_key*.p8`/`rsa_key*.pub` naming patterns are gitignored, but a deleted file can't leak by accident.
