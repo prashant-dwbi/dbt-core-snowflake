@@ -129,3 +129,54 @@ dbt test
 dbt docs generate
 dbt docs serve
 ```
+
+## 8. CI pipeline
+
+A GitHub Actions workflow at [`.github/workflows/dbt-ci.yml`](.github/workflows/dbt-ci.yml) runs `dbt debug` and `dbt build` (run + test) against Snowflake on every pull request into `main`. It builds into an isolated `CI` schema so it never touches the `DBT` dev schema or anything else.
+
+**Auth:** the pipeline uses key-pair auth with a dedicated, least-privilege Snowflake service user (`DBT_CI_SVC` / role `DBT_CI_ROLE`) instead of a personal account or password — CI runners are headless, so interactive `externalbrowser` SSO won't work there.
+
+**Profile:** [`ci/profiles.yml`](ci/profiles.yml) is committed to the repo and contains no secrets — every value is pulled from an environment variable via `env_var()`, the same pattern used for local dev. The workflow sets `DBT_PROFILES_DIR` to that folder.
+
+### One-time setup
+
+1. Generate an RSA key pair (run locally, not committed):
+   ```bash
+   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+   openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+   ```
+2. Create the service user/role in Snowflake, using the public key body (strip the `-----BEGIN/END-----` lines):
+   ```sql
+
+   CREATE ROLE IF NOT EXISTS DBT_CI_ROLE;
+
+   CREATE USER IF NOT EXISTS DBT_CI_SVC
+     RSA_PUBLIC_KEY = '<base64 body of rsa_key.pub>'
+     DEFAULT_ROLE = DBT_CI_ROLE
+     DEFAULT_WAREHOUSE = COMPUTE_WH
+     COMMENT = 'Service account for GitHub Actions dbt CI';
+
+   GRANT ROLE DBT_CI_ROLE TO USER DBT_CI_SVC;
+
+   GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE DBT_CI_ROLE;
+   GRANT USAGE ON DATABASE SALES_MART_DEV TO ROLE DBT_CI_ROLE;
+   GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE_SAMPLE_DATA TO ROLE DBT_CI_ROLE;
+
+   CREATE SCHEMA IF NOT EXISTS SALES_MART_DEV.CI;
+   GRANT ALL ON SCHEMA SALES_MART_DEV.CI TO ROLE DBT_CI_ROLE;
+   GRANT CREATE TABLE, CREATE VIEW ON SCHEMA SALES_MART_DEV.CI TO ROLE DBT_CI_ROLE;
+   ```
+3. Add these as GitHub repo secrets (**Settings → Secrets and variables → Actions**):
+
+   | Secret | Value |
+   |---|---|
+   | `SNOWFLAKE_ACCOUNT` | your account locator |
+   | `SNOWFLAKE_CI_USER` | `DBT_CI_SVC` |
+   | `SNOWFLAKE_CI_PRIVATE_KEY` | full contents of `rsa_key.p8`, including the `BEGIN/END PRIVATE KEY` lines |
+   | `SNOWFLAKE_CI_PRIVATE_KEY_PASSPHRASE` | leave empty (key generated with `-nocrypt`) |
+   | `SNOWFLAKE_CI_ROLE` | `DBT_CI_ROLE` |
+   | `SNOWFLAKE_CI_DATABASE` | `SALES_MART_DEV` |
+   | `SNOWFLAKE_CI_WAREHOUSE` | `COMPUTE_WH` |
+   | `SNOWFLAKE_CI_SCHEMA` | `CI` |
+
+Once the secrets are in place, opening a PR against `main` triggers the workflow automatically.
