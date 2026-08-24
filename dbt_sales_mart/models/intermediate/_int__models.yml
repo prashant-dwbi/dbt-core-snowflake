@@ -3,36 +3,90 @@ version: 2
 models:
   - name: int_lineitem_revenue
     description: >
-      Line-item grain. Adds net_revenue (after discount) and gross_revenue
-      (after discount and tax) to the raw lineitem staging model.
+      Grain: one row per order line item (order_key + line_number).
+
+
+      Purpose: the single place where line-item revenue math happens. Reads
+      stg_tpch_lineitems as-is and adds two computed measures:
+      net_revenue = extended_price * (1 - discount_pct), and
+      gross_revenue = net_revenue * (1 + tax_pct). No joins, no filtering —
+      if the revenue formula ever needs to change (e.g. a new discount rule),
+      this is the only model that should need editing; every downstream
+      model inherits the change automatically.
+
+
+      Depends on: stg_tpch_lineitems only.
+      Consumed by: int_order_line_items_joined.
     columns:
       - name: order_key
+        description: FK to the parent order. Not unique alone — unique together with line_number.
         tests:
           - not_null
       - name: line_number
+        description: Line sequence number within an order (1, 2, 3, ...).
         tests:
           - not_null
+      - name: net_revenue
+        description: extended_price after discount is applied. Does not include tax.
+      - name: gross_revenue
+        description: net_revenue with tax applied on top. This is the "customer pays" amount.
 
   - name: int_order_line_items_joined
     description: >
-      Line-item grain. Joins int_lineitem_revenue to its parent order to pull
-      in customer_key, order_date, order_status and order_priority.
+      Grain: one row per order line item (order_key + line_number) — same
+      grain as int_lineitem_revenue, just enriched.
+
+
+      Purpose: attaches order-header context (customer_key, order_date,
+      order_status, order_priority) onto each line item, so downstream
+      marts don't need to join orders themselves. This is the model
+      fct_order_line_items selects from directly (fct_order_line_items is
+      intentionally a thin passthrough) — if you need to add another
+      order-header column to the line-item fact, add it here rather than
+      in the mart.
+
+
+      Depends on: int_lineitem_revenue, stg_tpch_orders.
+      Consumed by: fct_order_line_items (marts/sales).
     columns:
       - name: order_key
+        description: FK to the parent order. Not unique alone — unique together with line_number.
         tests:
           - not_null
       - name: line_number
+        description: Line sequence number within an order (1, 2, 3, ...).
         tests:
           - not_null
+      - name: customer_key
+        description: FK to the customer who placed the order (pulled from orders, not lineitem).
 
   - name: int_partsupp_enriched
     description: >
-      Part/supplier pairing grain. Joins partsupp to part and to supplier
-      (with supplier's nation and region) for procurement-style analysis.
+      Grain: one row per part/supplier pairing (part_key + supplier_key) —
+      same grain as the raw partsupp table.
+
+
+      Purpose: a reusable "which suppliers can provide this part, at what
+      cost, and where are they located" building block for procurement
+      analysis. Joins partsupp to part (name/brand/type) and to supplier
+      (name + nation_name + region_name, via a supplier -> nation -> region
+      chain resolved here rather than reused from a mart, to avoid
+      intermediate models depending on marts). If you need additional
+      part or supplier attributes in procurement-style marts, add them
+      here so other procurement models can reuse them too.
+
+
+      Depends on: stg_tpch_partsupps, stg_tpch_parts, stg_tpch_suppliers,
+      stg_tpch_nations, stg_tpch_regions.
+      Consumed by: mart_part_supply_by_nation (marts/sales).
     columns:
       - name: part_key
+        description: FK to the part. Not unique alone — unique together with supplier_key.
         tests:
           - not_null
       - name: supplier_key
+        description: FK to the supplier. Not unique alone — unique together with part_key.
         tests:
           - not_null
+      - name: supply_cost
+        description: What this supplier charges to supply this part — the input to min/avg/max cost rollups downstream.
