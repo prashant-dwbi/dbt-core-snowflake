@@ -267,3 +267,93 @@ Rotate a key immediately if it's ever exposed — pasted into a chat, shown in a
    ```
    (Snowflake doesn't let you leave the primary slot empty, so move the new key into `RSA_PUBLIC_KEY` and clear `RSA_PUBLIC_KEY_2` — this also leaves the account ready for the next rotation.) Repeat the equivalent `ALTER USER DBT_PROD_SVC ...` statements for the CD key.
 6. Delete the old and new private key files from disk once they're safely in GitHub secrets and Snowflake — they should never be needed locally again. Both `rsa_key*.p8`/`rsa_key*.pub` naming patterns are gitignored, but a deleted file can't leak by accident.
+
+## 11. Orchestrate dbt with Airflow locally (Astronomer)
+
+This repo also includes an [`airflow/`](airflow/) Astro project that runs the dbt project as an Airflow DAG using [astronomer-cosmos](https://astronomer.github.io/astronomer-cosmos/), instead of invoking `dbt` directly from the CLI. Cosmos turns each dbt model/test into its own Airflow task, so you get per-model retries, logs, and a dependency graph in the Airflow UI.
+
+### Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or another Docker daemon) running
+- [Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli) — the open-source tool that builds and runs Airflow locally in Docker:
+  ```powershell
+  winget install -e --id Astronomer.Astro
+  ```
+- Only one local Astro/Airflow project running Docker Compose at a time on the machine. Astro CLI gives each project its own Docker network, but if you have multiple `astro dev start` projects up simultaneously, container-to-container traffic can cross networks and connect to the wrong Postgres — stop other local Astro projects (`astro dev stop` from their folder, or `docker stop <container>`) before starting this one if you hit unexplained database errors.
+
+### How the project is wired up
+
+- [`airflow/Dockerfile`](airflow/Dockerfile) builds a **separate Python virtualenv** (`/usr/local/airflow/dbt_venv`) inside the Airflow image just for `dbt-snowflake`, so dbt's dependency pins never collide with Airflow's own packages.
+- [`airflow/requirements.txt`](airflow/requirements.txt) installs `astronomer-cosmos`, the provider that turns a dbt project into Airflow tasks.
+- [`airflow/dags/dbt_sales_mart_dag.py`](airflow/dags/dbt_sales_mart_dag.py) defines a `DbtDag` pointed at `/usr/local/airflow/dbt_sales_mart` inside the container, using the dbt executable from the venv above.
+- [`airflow/docker-compose.override.yml`](airflow/docker-compose.override.yml) does two things Astro CLI's default compose file doesn't:
+  - Pins the local metadata Postgres to `postgres:13` — Airflow 3.3's `db migrate` runs a data migration that calls `gen_random_uuid()`, which the Astro CLI's default `postgres:12.6` image doesn't provide.
+  - Volume-mounts the repo's `dbt_sales_mart/` folder (a sibling of `airflow/`, outside its Docker build context) into the scheduler, dag-processor, triggerer, and api-server containers at `/usr/local/airflow/dbt_sales_mart` — so Cosmos can see the actual dbt project, and local edits to models show up without rebuilding the image.
+- [`dbt_sales_mart/profiles.yml`](dbt_sales_mart/profiles.yml) is the same profile used for local CLI runs (step 5 above); Astro CLI automatically injects every variable from `airflow/.env` into all of the containers, so the `env_var()` lookups resolve the same way they do outside Docker.
+
+### 1. Set Snowflake credentials for the container
+
+Astro CLI loads `airflow/.env` into every container's environment automatically. It's gitignored, so add your real values there (not in `dbt_sales_mart/profiles.yml`):
+
+```
+SNOWFLAKE_ACCOUNT=your_account_locator
+SNOWFLAKE_USER=your_username
+SNOWFLAKE_PASSWORD=your_password
+SNOWFLAKE_ROLE=your_role
+SNOWFLAKE_DATABASE=SALES_MART_DEV
+SNOWFLAKE_WAREHOUSE=COMPUTE_WH
+SNOWFLAKE_SCHEMA=DBT
+```
+
+### 2. Start Airflow
+
+```powershell
+cd airflow
+astro dev start
+```
+
+This builds the image from the Dockerfile and starts six containers: Postgres (metadata DB), scheduler, dag-processor, api-server (Airflow UI), triggerer, and a one-shot db-migration job that runs `airflow db migrate` and then exits (an `Exited` state for `db-migration` in the next command is expected — it's not a crash).
+
+Once healthy, it prints the local UI URL (e.g. `http://airflow.localhost:<port>`); the default login is `admin` / `admin`.
+
+### 3. Verify the environment came up clean
+
+```powershell
+astro dev ps
+```
+
+All services except `db-migration` should show `running`. Then check the DAG parsed without errors and dbt can actually reach Snowflake:
+
+```powershell
+docker exec <project>-scheduler-1 airflow dags list-import-errors
+docker exec <project>-scheduler-1 bash -c "cd /usr/local/airflow/dbt_sales_mart && /usr/local/airflow/dbt_venv/bin/dbt debug --profiles-dir ."
+```
+
+(`<project>` is the container name prefix Astro CLI generated for this project — find it with `astro dev ps` or `docker ps`.) `dbt debug` should report `Connection test: [OK connection ok]`; the "git" dependency check failing is expected and harmless unless `dbt_sales_mart/packages.yml` starts pulling packages from git.
+
+### 4. Run the dbt DAG
+
+From the UI (http://airflow.localhost:*): find the `dbt_sales_mart` DAG, toggle it **on** (DAGs start paused by default), and click the trigger (▶) button.
+
+From the CLI instead:
+
+```powershell
+docker exec <project>-scheduler-1 airflow dags unpause dbt_sales_mart
+docker exec <project>-scheduler-1 airflow dags trigger dbt_sales_mart
+```
+
+Watch progress with:
+
+```powershell
+docker exec <project>-scheduler-1 airflow tasks states-for-dag-run dbt_sales_mart "<dag_run_id>"
+```
+
+(`<dag_run_id>` is printed by the `trigger` command, e.g. `manual__2026-08-24T11:58:43.758466+00:00`.) Each dbt model/test appears as its own task (`<model>.run`, `<model>.test`), running in dependency order — staging models first, then intermediate, then marts/facts.
+
+### 5. Stop Airflow
+
+```powershell
+astro dev stop
+```
+
+This stops and removes the containers but keeps the Postgres volume (DAG history, connections, etc.) for next time. Use `astro dev kill` instead if you also want to wipe that volume and start from a truly clean metadata DB.

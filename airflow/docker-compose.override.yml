@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:13
+  scheduler:
+    volumes:
+      - ../dbt_sales_mart:/usr/local/airflow/dbt_sales_mart
+  dag-processor:
+    volumes:
+      - ../dbt_sales_mart:/usr/local/airflow/dbt_sales_mart
+  triggerer:
+    volumes:
+      - ../dbt_sales_mart:/usr/local/airflow/dbt_sales_mart
+  api-server:
+    volumes:
+      - ../dbt_sales_mart:/usr/local/airflow/dbt_sales_mart
