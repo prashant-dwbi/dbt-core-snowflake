@@ -4,12 +4,16 @@ services:
   scheduler:
     volumes:
       - ../dbt_sales_mart:/usr/local/airflow/dbt_sales_mart
+      - ../stage_secrets:/usr/local/airflow/stage_secrets
   dag-processor:
     volumes:
       - ../dbt_sales_mart:/usr/local/airflow/dbt_sales_mart
+      - ../stage_secrets:/usr/local/airflow/stage_secrets
   triggerer:
     volumes:
       - ../dbt_sales_mart:/usr/local/airflow/dbt_sales_mart
+      - ../stage_secrets:/usr/local/airflow/stage_secrets
   api-server:
     volumes:
       - ../dbt_sales_mart:/usr/local/airflow/dbt_sales_mart
+      - ../stage_secrets:/usr/local/airflow/stage_secrets

@@ -33,8 +33,15 @@ jobs:
 
       - name: Write Snowflake private key to disk
         run: |
-          printf '%s\n' "${{ secrets.SNOWFLAKE_STAGE_PRIVATE_KEY }}" > dbt_sales_mart/rsa_key_stage.p8
-          chmod 600 dbt_sales_mart/rsa_key_stage.p8
+          mkdir -p stage_secrets
+          printf '%s\n' "${{ secrets.SNOWFLAKE_STAGE_PRIVATE_KEY }}" > stage_secrets/rsa_key_stage.p8
+          # World-readable (not just owner-readable): the key is read by the
+          # Airflow container's user, which has a different uid than the
+          # runner user that wrote this file via a bind mount. The runner VM
+          # is destroyed after the job, so this is a low-risk trade-off.
+          # Kept outside dbt_sales_mart/ so Cosmos's project-folder hashing
+          # (which reads every file under the dbt project dir) never touches it.
+          chmod 644 stage_secrets/rsa_key_stage.p8
 
       - name: Write Snowflake env for stage Airflow
         working-directory: airflow
@@ -43,7 +50,7 @@ jobs:
           DBT_TARGET=stage
           SNOWFLAKE_ACCOUNT=${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER=${{ secrets.SNOWFLAKE_STAGE_USER }}
-          SNOWFLAKE_PRIVATE_KEY_PATH=/usr/local/airflow/dbt_sales_mart/rsa_key_stage.p8
+          SNOWFLAKE_PRIVATE_KEY_PATH=/usr/local/airflow/stage_secrets/rsa_key_stage.p8
           SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=${{ secrets.SNOWFLAKE_STAGE_PRIVATE_KEY_PASSPHRASE }}
           SNOWFLAKE_ROLE=${{ secrets.SNOWFLAKE_STAGE_ROLE }}
           SNOWFLAKE_DATABASE=${{ secrets.SNOWFLAKE_STAGE_DATABASE }}

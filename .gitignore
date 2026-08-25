@@ -6,3 +6,4 @@ scripts/set-snowflake-env.ps1
 scripts/set-snowflake-env.bat
 rsa_key*.p8
 rsa_key*.pub
+stage_secrets/
