@@ -159,6 +159,29 @@ erDiagram
         decimal net_revenue
         decimal gross_revenue
     }
+    MART_SALES_BY_NATION_QUARTER {
+        string nation_name PK
+        string region_name
+        date order_quarter PK
+        int order_count
+        int customer_count
+        decimal net_revenue
+        decimal gross_revenue
+        decimal avg_order_value
+    }
+    MART_PART_SUPPLY_BY_NATION {
+        int part_key PK
+        string part_name
+        string brand
+        string part_type
+        string nation_name PK
+        string region_name
+        int supplier_count
+        decimal total_available_quantity
+        decimal min_supply_cost
+        decimal avg_supply_cost
+        decimal max_supply_cost
+    }
 
     DIM_NATIONS ||--o{ DIM_CUSTOMERS : "located in"
     DIM_NATIONS ||--o{ DIM_SUPPLIERS : "located in"
@@ -166,9 +189,13 @@ erDiagram
     FCT_ORDERS ||--o{ FCT_ORDER_LINE_ITEMS : contains
     DIM_PARTS ||--o{ FCT_ORDER_LINE_ITEMS : "ordered as"
     DIM_SUPPLIERS ||--o{ FCT_ORDER_LINE_ITEMS : fulfills
+    FCT_ORDERS ||--o{ MART_SALES_BY_NATION_QUARTER : "rolled up into"
+    DIM_CUSTOMERS ||--o{ MART_SALES_BY_NATION_QUARTER : "grouped by nation of"
+    DIM_PARTS ||--o{ MART_PART_SUPPLY_BY_NATION : "rolled up into"
+    DIM_SUPPLIERS ||--o{ MART_PART_SUPPLY_BY_NATION : "grouped by nation of"
 ```
 
-`mart_sales_by_nation_quarter` (rolls up `fct_orders` × `dim_customers` by nation/quarter) and `mart_part_supply_by_nation` (rolls up `int_partsupp_enriched` by part/nation) are pre-aggregated reporting tables derived from the entities above, not additional entities in their own right.
+`mart_sales_by_nation_quarter` and `mart_part_supply_by_nation` are pre-aggregated reporting tables derived from the star schema above — their "primary key" is really a grouping key (nation/quarter, part/nation), not a natural entity identifier, so treat their PK markers as grain rather than a true row identity.
 
 ## Repository layout
 
