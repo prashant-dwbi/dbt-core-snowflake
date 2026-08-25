@@ -24,7 +24,7 @@ jobs:
       - name: Derive stage schema name from branch
         id: schema
         run: |
-          schema=$(scripts/derive_schema_name.sh "${{ github.head_ref }}")
+          schema=$(bash scripts/derive_schema_name.sh "${{ github.head_ref }}")
           echo "Derived schema: $schema"
           echo "name=$schema" >> "$GITHUB_OUTPUT"
 
