@@ -1,6 +1,6 @@
-# dbt Sales Mart
+# Sales Analytics Mart Project
 
-A dbt-core project that builds a sales analytics mart on Snowflake from the sample TPC-H dataset, with a full CI/CD pipeline and Airflow orchestration.
+This is a dbt-core project that builds a sales analytics mart on Snowflake from the sample TPC-H dataset, with a full CI/CD pipeline and Airflow orchestration.
 
 For step-by-step setup, pipeline configuration, and operational procedures, see the [**Runbook**](docs/RUNBOOK.md). For provisioning a brand-new Snowflake account, see [`snowflake/README.md`](snowflake/README.md).
 
