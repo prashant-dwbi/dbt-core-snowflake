@@ -369,6 +369,10 @@ Three additions to the CI/CD flow described in sections 8–9:
 - **SQL linting** — `sqlfluff` checks style/conventions on every PR, using the `dbt` templater so it lints the actual rendered SQL.
 - **Per-PR Airflow staging** — a second workflow, `dbt-airflow-stage.yml`, spins up an ephemeral local Airflow (via Astro CLI, same setup as section 11) and runs the real `dbt_sales_mart` Cosmos DAG against an isolated schema in a new `SALES_MART_STAGE` database, so the actual orchestration path gets exercised before merge, not just a bare `dbt build`.
 
+### Path-scoped triggers
+
+All three workflows (`dbt-ci.yml`, `dbt-cd.yml`, `dbt-airflow-stage.yml`) use a `paths:` filter so they only trigger when a dbt-relevant path changes — `dbt_sales_mart/**`, their respective `ci/profiles.yml`/`cd/profiles.yml`, `airflow/**` and `scripts/derive_schema_name.sh` for the stage job, and each workflow's own file. Changes limited to other folders (e.g. `README.md`, `snowflake/*.sql`, unrelated `airflow/` files for the CI/CD workflows) don't trigger these pipelines. This relies on none of these three checks being configured as a **required status check** in `main`'s branch protection — a `paths:`-filtered workflow doesn't post a "skipped" status for non-matching changes, it simply never runs, which would permanently block merges of PRs that touch only unrelated paths if it were required.
+
 ### How the stage schema name is derived
 
 [`scripts/derive_schema_name.sh`](scripts/derive_schema_name.sh) takes the PR's branch name and:
