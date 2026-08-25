@@ -1,0 +1,10 @@
+[sqlfluff]
+templater = dbt
+dialect = snowflake
+sql_file_exts = .sql
+
+[sqlfluff:templater:dbt]
+project_dir = .
+profiles_dir = ../ci
+profile = dbt_sales_mart
+target = ci

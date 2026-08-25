@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -5,9 +6,12 @@ from cosmos import DbtDag, ExecutionConfig, ProfileConfig, ProjectConfig
 
 DBT_PROJECT_PATH = Path("/usr/local/airflow/dbt_sales_mart")
 
+# "dev" for local developer runs (externalbrowser/password auth), "stage" for
+# the ephemeral per-PR CI job (key-pair auth against SALES_MART_STAGE) — see
+# dbt_sales_mart/profiles.yml.
 profile_config = ProfileConfig(
     profile_name="dbt_sales_mart",
-    target_name="dev",
+    target_name=os.environ.get("DBT_TARGET", "dev"),
     profiles_yml_filepath=DBT_PROJECT_PATH / "profiles.yml",
 )
 

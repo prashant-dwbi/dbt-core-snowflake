@@ -5,10 +5,23 @@ dbt_sales_mart:
       type: snowflake
       account: "your_account_locator"
       user: "your_username"
+      authenticator: "externalbrowser"   # or "snowflake" + password: "your_password" for headless use (e.g. Airflow)
       password: "your_password"
       role: "your_role"
       database: "your_database"
       warehouse: "your_warehouse"
       schema: "your_schema"
+      threads: 4
+      client_session_keep_alive: false
+    stage:                             # used only by the ephemeral per-PR Airflow stage job — key-pair auth, headless
+      type: snowflake
+      account: "your_account_locator"
+      user: "your_stage_service_user"
+      private_key_path: "/path/to/rsa_key_stage.p8"
+      private_key_passphrase: ""
+      role: "your_stage_role"
+      database: "your_stage_database"
+      warehouse: "your_warehouse"
+      schema: "your_stage_schema"
       threads: 4
       client_session_keep_alive: false
