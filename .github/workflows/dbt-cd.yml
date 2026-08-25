@@ -3,6 +3,10 @@ name: dbt CD
 on:
   push:
     branches: [main]
+    paths:
+      - 'dbt_sales_mart/**'
+      - 'cd/profiles.yml'
+      - '.github/workflows/dbt-cd.yml'
 
 permissions:
   contents: write

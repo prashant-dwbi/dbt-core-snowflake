@@ -3,6 +3,10 @@ name: dbt CI
 on:
   pull_request:
     branches: [main]
+    paths:
+      - 'dbt_sales_mart/**'
+      - 'ci/profiles.yml'
+      - '.github/workflows/dbt-ci.yml'
 
 env:
   SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}

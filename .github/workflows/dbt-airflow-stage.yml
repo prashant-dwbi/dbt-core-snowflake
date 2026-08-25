@@ -9,6 +9,11 @@ name: dbt Airflow Stage
 on:
   pull_request:
     branches: [main]
+    paths:
+      - 'dbt_sales_mart/**'
+      - 'airflow/**'
+      - 'scripts/derive_schema_name.sh'
+      - '.github/workflows/dbt-airflow-stage.yml'
 
 concurrency:
   group: dbt-airflow-stage-${{ github.head_ref }}
