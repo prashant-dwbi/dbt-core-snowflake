@@ -27,6 +27,8 @@ select
     line_items.line_status,
     line_items.ship_date,
     line_items.net_revenue,
-    line_items.gross_revenue
+    line_items.gross_revenue,
+    current_timestamp() as created_dttm,
+    current_timestamp() as updated_dttm
 from line_items
 left join orders on line_items.order_key = orders.order_key

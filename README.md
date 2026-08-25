@@ -7,6 +7,8 @@ Local setup instructions for running this dbt project against Snowflake on Windo
 - Python 3.8–3.11
 - Access to a Snowflake account (account locator, user, role, warehouse, database, schema)
 
+Setting up a brand-new Snowflake account (or one without any of this project's objects yet)? Run the scripts in [`snowflake/`](snowflake/) first, in order — see [`snowflake/README.md`](snowflake/README.md).
+
 ## 1. Create and activate a virtual environment
 
 ```powershell
@@ -84,6 +86,7 @@ dbt_sales_mart:
       account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
       user: "{{ env_var('SNOWFLAKE_USER') }}"
       authenticator: "{{ env_var('SNOWFLAKE_AUTHENTICATOR', 'externalbrowser') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
       role: "{{ env_var('SNOWFLAKE_ROLE') }}"
       database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
       warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
@@ -357,3 +360,59 @@ astro dev stop
 ```
 
 This stops and removes the containers but keeps the Postgres volume (DAG history, connections, etc.) for next time. Use `astro dev kill` instead if you also want to wipe that volume and start from a truly clean metadata DB.
+
+## 12. Slim CI, SQL linting, and per-PR staging via Airflow
+
+Three additions to the CI/CD flow described in sections 8–9:
+
+- **Slim CI** — `dbt-ci.yml` only rebuilds models that changed on the PR (plus their downstream dependents), instead of the whole project, by diffing against the manifest from the last successful production build.
+- **SQL linting** — `sqlfluff` checks style/conventions on every PR, using the `dbt` templater so it lints the actual rendered SQL.
+- **Per-PR Airflow staging** — a second workflow, `dbt-airflow-stage.yml`, spins up an ephemeral local Airflow (via Astro CLI, same setup as section 11) and runs the real `dbt_sales_mart` Cosmos DAG against an isolated schema in a new `SALES_MART_STAGE` database, so the actual orchestration path gets exercised before merge, not just a bare `dbt build`.
+
+### How the stage schema name is derived
+
+[`scripts/derive_schema_name.sh`](scripts/derive_schema_name.sh) takes the PR's branch name and:
+- takes the first two `-`-separated tokens, uppercased, joined with `_` — e.g. `JIRA-123-add-a-column` → `JIRA_123`
+- falls back to the whole branch name (sanitized the same way) if it has fewer than two tokens — e.g. `hotfix` → `HOTFIX`
+
+Every PR built from the same ticket reuses (and overwrites) the same schema, which is intentional — pushing new commits to the same PR just rebuilds its schema in place. The main risk this doesn't eliminate is two *unrelated* branches that happen to share their first two tokens (e.g. `fix-bug-123` and `fix-bug-456` both derive `FIX_BUG`) — following a consistent `TICKET-NUMBER-description` branch naming convention avoids this in practice. A `concurrency` group keyed on the branch name (in `dbt-airflow-stage.yml`) cancels superseded runs so two pushes to the same PR can't race against the same schema.
+
+Because there's no per-PR cleanup, abandoned schemas in `SALES_MART_STAGE` accumulate over time — periodic manual/scheduled housekeeping (e.g. dropping schemas untouched for 90+ days) is a reasonable later addition, not something this design depends on for correctness.
+
+### How slim CI works
+
+1. On every merge to `main`, `dbt-cd.yml` publishes `target/manifest.json` from the successful production build to a dedicated orphan branch, `previous_release_artifacts` (force-pushed as a single commit each time — only the latest manifest is ever needed).
+2. On every PR, `dbt-ci.yml` checks out that branch and runs:
+   ```bash
+   dbt build --select "state:modified+" --state ../previous_artifacts --defer --favor-state
+   ```
+   `state:modified+` selects changed models and everything downstream of them. `--defer --favor-state` resolves `ref()`s for everything *not* selected against production (`SALES_MART_PROD`), which is why `DBT_CI_ROLE` needs read access there (see setup below).
+3. If `previous_release_artifacts` doesn't exist yet (e.g. the very first run), CI automatically falls back to a full `dbt build`.
+
+Note this still requires a live Snowflake connection — `dbt compile`/`build`'s state comparison and deferred `ref()` resolution both need to reach Snowflake, so this doesn't remove Snowflake as a CI dependency, it just reduces how much gets rebuilt.
+
+### One-time setup
+
+1. Generate a dedicated RSA key pair for the stage service account (same key-pair pattern as CI/CD — see setup steps in sections 8–9 — keep it distinct from both):
+   ```bash
+   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key_stage.p8 -nocrypt
+   openssl rsa -in rsa_key_stage.p8 -pubout -out rsa_key_stage.pub
+   ```
+2. Run [`snowflake/03_setup_stage_and_slim_ci.sql`](snowflake/03_setup_stage_and_slim_ci.sql) (with the public key body pasted in) — it grants `DBT_CI_ROLE` read access to `SALES_MART_PROD` (for slim CI's `--defer`), and creates the new `SALES_MART_STAGE` database plus a dedicated `DBT_STAGE_SVC` / `DBT_STAGE_ROLE` service account, authenticated by key pair like the CI/CD accounts (no passwords).
+3. Add these repo secrets (**Settings → Secrets and variables → Actions**) for the stage workflow:
+
+   | Secret | Value |
+   |---|---|
+   | `SNOWFLAKE_STAGE_USER` | `DBT_STAGE_SVC` |
+   | `SNOWFLAKE_STAGE_PRIVATE_KEY` | full contents of `rsa_key_stage.p8`, including the `BEGIN/END PRIVATE KEY` lines |
+   | `SNOWFLAKE_STAGE_PRIVATE_KEY_PASSPHRASE` | omit this secret entirely — the workflow/profile default to an empty passphrase when it's unset (key generated with `-nocrypt`) |
+   | `SNOWFLAKE_STAGE_ROLE` | `DBT_STAGE_ROLE` |
+   | `SNOWFLAKE_STAGE_DATABASE` | `SALES_MART_STAGE` |
+   | `SNOWFLAKE_STAGE_WAREHOUSE` | `COMPUTE_WH` |
+
+   (`SNOWFLAKE_ACCOUNT` is reused from the existing repo secret.)
+4. No action needed for `previous_release_artifacts` — `dbt-cd.yml` creates it automatically on the next successful merge to `main`.
+
+The stage job authenticates via a `stage` target in `dbt_sales_mart/profiles.yml` (key-pair auth, distinct from the `dev` target used for local development). The Airflow DAG ([`airflow/dags/dbt_sales_mart_dag.py`](airflow/dags/dbt_sales_mart_dag.py)) picks whichever target the `DBT_TARGET` env var names, defaulting to `dev` — the stage workflow sets `DBT_TARGET=stage`.
+
+Once these are in place, every PR against `main` runs three checks: `dbt-ci.yml` (slim build + lint), `dbt-cd.yml` (only on merge), and `dbt-airflow-stage.yml` (ephemeral Airflow run against the PR's own `SALES_MART_STAGE` schema).

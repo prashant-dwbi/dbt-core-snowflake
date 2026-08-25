@@ -29,8 +29,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dbt-snowflake
-        run: pip install dbt-snowflake
+      - name: Install dbt-snowflake and sqlfluff
+        run: pip install dbt-snowflake sqlfluff sqlfluff-templater-dbt
 
       - name: Write Snowflake private key to disk
         run: |
@@ -42,5 +42,23 @@ jobs:
       - name: dbt debug
         run: dbt debug
 
-      - name: dbt build
-        run: dbt build
+      - name: sqlfluff lint
+        run: sqlfluff lint models
+
+      - name: Fetch previous release manifest (for slim CI)
+        id: previous_manifest
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          ref: previous_release_artifacts
+          path: previous_artifacts
+
+      - name: dbt build (slim, changed models only)
+        run: |
+          if [ "${{ steps.previous_manifest.outcome }}" = "success" ] && [ -f ../previous_artifacts/manifest.json ]; then
+            echo "Previous release manifest found — building only changed models and their downstream dependents."
+            dbt build --select "state:modified+" --state ../previous_artifacts --defer --favor-state
+          else
+            echo "No previous release manifest found (first run, or branch not yet created) — running a full build."
+            dbt build
+          fi

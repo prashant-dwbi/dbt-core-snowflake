@@ -1,0 +1,72 @@
+name: dbt Airflow Stage
+
+# Runs the dbt_sales_mart Cosmos DAG through an ephemeral, per-PR local
+# Airflow (Astro) instance, targeting an isolated schema in
+# SALES_MART_STAGE derived from the PR's branch name. This exercises the
+# actual Airflow/Cosmos orchestration path (not just `dbt build`) before
+# merge, without needing a hosted Airflow environment.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: dbt-airflow-stage-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  stage-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive stage schema name from branch
+        id: schema
+        run: |
+          schema=$(bash scripts/derive_schema_name.sh "${{ github.head_ref }}")
+          echo "Derived schema: $schema"
+          echo "name=$schema" >> "$GITHUB_OUTPUT"
+
+      - name: Install Astro CLI
+        run: curl -sSL install.astronomer.io | sudo bash -s
+
+      - name: Write Snowflake private key to disk
+        run: |
+          mkdir -p stage_secrets
+          printf '%s\n' "${{ secrets.SNOWFLAKE_STAGE_PRIVATE_KEY }}" > stage_secrets/rsa_key_stage.p8
+          # World-readable (not just owner-readable): the key is read by the
+          # Airflow container's user, which has a different uid than the
+          # runner user that wrote this file via a bind mount. The runner VM
+          # is destroyed after the job, so this is a low-risk trade-off.
+          # Kept outside dbt_sales_mart/ so Cosmos's project-folder hashing
+          # (which reads every file under the dbt project dir) never touches it.
+          chmod 644 stage_secrets/rsa_key_stage.p8
+
+      - name: Write Snowflake env for stage Airflow
+        working-directory: airflow
+        run: |
+          cat > .env <<EOF
+          DBT_TARGET=stage
+          SNOWFLAKE_ACCOUNT=${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER=${{ secrets.SNOWFLAKE_STAGE_USER }}
+          SNOWFLAKE_PRIVATE_KEY_PATH=/usr/local/airflow/stage_secrets/rsa_key_stage.p8
+          SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=${{ secrets.SNOWFLAKE_STAGE_PRIVATE_KEY_PASSPHRASE }}
+          SNOWFLAKE_ROLE=${{ secrets.SNOWFLAKE_STAGE_ROLE }}
+          SNOWFLAKE_DATABASE=${{ secrets.SNOWFLAKE_STAGE_DATABASE }}
+          SNOWFLAKE_WAREHOUSE=${{ secrets.SNOWFLAKE_STAGE_WAREHOUSE }}
+          SNOWFLAKE_SCHEMA=${{ steps.schema.outputs.name }}
+          EOF
+
+      - name: Start Airflow (Astro)
+        working-directory: airflow
+        run: astro dev start --wait 5m
+
+      - name: Run dbt_sales_mart DAG against the stage schema
+        working-directory: airflow
+        run: astro dev run dags test dbt_sales_mart "$(date -u +%Y-%m-%d)"
+
+      - name: Stop Airflow (Astro)
+        if: always()
+        working-directory: airflow
+        run: astro dev stop
