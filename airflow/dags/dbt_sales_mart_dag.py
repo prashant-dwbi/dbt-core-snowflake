@@ -23,6 +23,7 @@ dbt_sales_mart_dag = DbtDag(
     project_config=ProjectConfig(DBT_PROJECT_PATH),
     profile_config=profile_config,
     execution_config=execution_config,
+    operator_args={"install_deps": True},
     schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,

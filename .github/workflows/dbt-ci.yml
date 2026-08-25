@@ -43,6 +43,9 @@ jobs:
           chmod 600 "$RUNNER_TEMP/snowflake_keys/rsa_key.p8"
           echo "SNOWFLAKE_PRIVATE_KEY_PATH=$RUNNER_TEMP/snowflake_keys/rsa_key.p8" >> "$GITHUB_ENV"
 
+      - name: dbt deps
+        run: dbt deps
+
       - name: dbt debug
         run: dbt debug
 

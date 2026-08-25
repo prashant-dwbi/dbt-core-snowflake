@@ -126,6 +126,12 @@ If you didn't set `DBT_PROFILES_DIR`, pass the flag explicitly instead: `dbt deb
 
 ## 7. Run and test the project
 
+The project declares its dbt package dependencies in [`dbt_sales_mart/dependencies.yml`](dbt_sales_mart/dependencies.yml) (currently just `dbt_utils`). Install them once (and again after pulling changes to that file):
+
+```powershell
+dbt deps
+```
+
 ```powershell
 dbt run
 dbt test
