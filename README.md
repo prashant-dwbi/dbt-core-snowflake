@@ -7,6 +7,8 @@ Local setup instructions for running this dbt project against Snowflake on Windo
 - Python 3.8–3.11
 - Access to a Snowflake account (account locator, user, role, warehouse, database, schema)
 
+Setting up a brand-new Snowflake account (or one without any of this project's objects yet)? Run the scripts in [`snowflake/`](snowflake/) first, in order — see [`snowflake/README.md`](snowflake/README.md).
+
 ## 1. Create and activate a virtual environment
 
 ```powershell
@@ -396,7 +398,7 @@ Note this still requires a live Snowflake connection — `dbt compile`/`build`'s
    openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key_stage.p8 -nocrypt
    openssl rsa -in rsa_key_stage.p8 -pubout -out rsa_key_stage.pub
    ```
-2. Run [`snowflake/setup_stage_and_slim_ci.sql`](snowflake/setup_stage_and_slim_ci.sql) (with the public key body pasted in) — it grants `DBT_CI_ROLE` read access to `SALES_MART_PROD` (for slim CI's `--defer`), and creates the new `SALES_MART_STAGE` database plus a dedicated `DBT_STAGE_SVC` / `DBT_STAGE_ROLE` service account, authenticated by key pair like the CI/CD accounts (no passwords).
+2. Run [`snowflake/03_setup_stage_and_slim_ci.sql`](snowflake/03_setup_stage_and_slim_ci.sql) (with the public key body pasted in) — it grants `DBT_CI_ROLE` read access to `SALES_MART_PROD` (for slim CI's `--defer`), and creates the new `SALES_MART_STAGE` database plus a dedicated `DBT_STAGE_SVC` / `DBT_STAGE_ROLE` service account, authenticated by key pair like the CI/CD accounts (no passwords).
 3. Add these repo secrets (**Settings → Secrets and variables → Actions**) for the stage workflow:
 
    | Secret | Value |

@@ -1,3 +1,5 @@
+-- 03_setup_stage_and_slim_ci.sql
+--
 -- One-time Snowflake setup for:
 --   1. Slim CI (dbt-ci.yml) — DBT_CI_ROLE needs read access to SALES_MART_PROD
 --      so `dbt build --defer --favor-state` can resolve refs for models that
@@ -6,6 +8,8 @@
 --      dedicated, least-privilege service account scoped only to a new
 --      SALES_MART_STAGE database.
 --
+-- Run after 00_bootstrap_new_account.sql, 01_setup_ci.sql and 02_setup_cd.sql
+-- (this script grants against SALES_MART_PROD, so it must exist already).
 -- Run as a role with sufficient privileges (e.g. ACCOUNTADMIN or SYSADMIN).
 
 -- ── 1. Slim CI: read-only grant so DBT_CI_ROLE can defer to production ──
