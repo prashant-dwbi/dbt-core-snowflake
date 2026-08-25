@@ -2,6 +2,7 @@
 templater = dbt
 dialect = snowflake
 sql_file_exts = .sql
+max_line_length = 120
 
 [sqlfluff:templater:dbt]
 project_dir = .

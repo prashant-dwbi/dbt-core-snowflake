@@ -4,6 +4,5 @@ target/
 dbt_packages/
 scripts/set-snowflake-env.ps1
 scripts/set-snowflake-env.bat
-dbt_sales_mart/profiles.yml
 rsa_key*.p8
 rsa_key*.pub
